@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Convención sugerida por Microsoft: <Empresa/Proyecto>.EntityFrameworkCore.<Motor>. El
+         ensamblado/namespace se mantienen como EntityFrameworkCore.Ase (no se pidió renombrarlos,
+         solo el nombre del paquete NuGet) — ver DECISIONS.md, Fase 7. -->
+    <PackageId>Chiola.EntityFrameworkCore.Ase</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Fernando Chiola</Authors>
+    <Description>Entity Framework Core provider for SAP ASE (Sybase Adaptive Server Enterprise).</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/ferchiola/EntityFrameworkCore.Ase</RepositoryUrl>
+    <PackageTags>entity-framework-core;sap-ase;sybase;ado.net</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AdoNetCore.AseClient" Version="0.19.2" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.*" PrivateAssets="all" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,45 @@
+name: Publish to NuGet
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # requerido por NuGet Trusted Publishing (OIDC)
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      # Solo los tests unitarios (mocks, sin red): los de EntityFrameworkCore.Ase.FunctionalTests
+      # necesitan una instancia real de ASE en una LAN privada, inalcanzable desde un runner de
+      # GitHub Actions — se excluyen a propósito, no es un descuido.
+      - name: Run unit tests
+        run: dotnet test test/EntityFrameworkCore.Ase.Tests --configuration Release --no-build
+
+      - name: Pack
+        run: dotnet pack src/EntityFrameworkCore.Ase --configuration Release --no-build --output artifacts
+
+      - name: NuGet login (OIDC -> temp API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: chiola
+
+      - name: NuGet push
+        run: dotnet nuget push artifacts/*.nupkg --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
