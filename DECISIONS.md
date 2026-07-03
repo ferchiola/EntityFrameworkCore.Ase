@@ -647,6 +647,32 @@ Models`) contra una base ASE real con dos tablas relacionadas por FK, dos índic
   constructor estático. Se repitió el mismo `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)`
   en el constructor estático de `AseDatabaseModelFactory`.
 
+#### Bug real encontrado después de publicar 0.1.0: `GetIndexes` explota contra tablas sin columnas indexables
+
+Al validar manualmente cómo scaffoldear con el paquete recién publicado, se probó (sin querer, de
+prueba) contra la base `master`, que además de tablas normales tiene decenas de pseudo-tablas de
+monitoreo (`monProcess`, `monSysWaits`, etc. — vistas en memoria de estadísticas del server, no
+tablas reales, pero igual aparecen con `type = 'U'` en `sysobjects`). Contra esas tablas,
+`GetIndexes()` explotaba con `System.ArgumentException: Value does not fall within the expected
+range.` en `AseDataReader.GetOrdinal`.
+
+Causa: ya se sabía que `sp_helpindex` tira un `AseException` cuando una tabla común no tiene ningún
+índice (cubierto con un `catch`), pero para estas pseudo-tablas de monitoreo hace algo distinto —
+**no tira excepción**, devuelve un resultset que se ejecuta sin error pero con **cero columnas**
+(`reader.FieldCount == 0`). El contrato estándar de ADO.NET para `IDataRecord.GetOrdinal` con un
+nombre de columna inexistente es devolver `-1`, pero `AdoNetCore.AseClient` en cambio tira
+`ArgumentException` — no había cobertura para ese caso. Fix: chequear `reader.FieldCount == 0`
+explícitamente antes de llamar a `GetOrdinal`, y tratarlo igual que el caso de la excepción (sin
+índices para scaffoldear).
+
+Este bug ya estaba en el paquete `0.1.0` publicado a nuget.org — nunca se había probado el scaffold
+contra `master` durante el desarrollo original de la feature (los tests y la verificación manual
+previa siempre usaron bases de aplicación normales, sin pseudo-tablas). No afecta a bases de
+aplicación típicas (sin `mon*`), pero sí a cualquier intento de scaffoldear `master` directamente, y
+en teoría a cualquier otra tabla real que por algún motivo produzca el mismo resultset sin columnas.
+Corregido en el código fuente; pendiente de decidir si amerita una versión `0.1.1` en nuget.org (no
+se publicó todavía al momento de escribir esto).
+
 #### No modelado / fuera de alcance
 
 - **Schema/owner de ASE**: igual que en fases anteriores, este provider no modela el concepto de

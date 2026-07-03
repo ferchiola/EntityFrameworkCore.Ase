@@ -229,6 +229,16 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
     ///     coincide exactamente con las columnas de la primary key: ASE crea automáticamente un índice
     ///     único para respaldar la PK, y ya está representado por <see cref="DatabaseTable.PrimaryKey" />
     ///     — incluirlo de nuevo como índice generaría un <c>HasIndex(...)</c> redundante al scaffoldear.
+    ///     <para>
+    ///     Dos formas distintas de "no hay índices", confirmadas contra ASE real: para una tabla
+    ///     común sin índices, <c>sp_helpindex</c> tira un <see cref="AseException" />; para las
+    ///     pseudo-tablas de monitoreo de <c>master</c> (<c>monProcess</c>, <c>monSysWaits</c>, etc. —
+    ///     tablas en memoria, no reales, pero igual aparecen con <c>type = 'U'</c> en
+    ///     <c>sysobjects</c>), en cambio devuelve un resultset "vacío" sin ninguna columna
+    ///     (<c>FieldCount == 0</c>), sin excepción — <c>GetOrdinal</c> tira
+    ///     <see cref="ArgumentException" /> en ese caso en vez de devolver -1 como el contrato
+    ///     estándar de ADO.NET. Hay que cubrir ambos casos.
+    ///     </para>
     /// </remarks>
     private static void GetIndexes(DbConnection connection, DatabaseTable table)
     {
@@ -240,6 +250,11 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
         try
         {
             using var reader = command.ExecuteReader();
+            if (reader.FieldCount == 0)
+            {
+                return;
+            }
+
             var nameIndex = reader.GetOrdinal("index_name");
             var keysIndex = reader.GetOrdinal("index_keys");
             var descriptionIndex = reader.GetOrdinal("index_description");
