@@ -11,7 +11,7 @@
          ensamblado/namespace se mantienen como EntityFrameworkCore.Ase (no se pidió renombrarlos,
          solo el nombre del paquete NuGet) — ver DECISIONS.md, Fase 7. -->
     <PackageId>Chiola.EntityFrameworkCore.Ase</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Fernando Chiola</Authors>
     <Description>Entity Framework Core provider for SAP ASE (Sybase Adaptive Server Enterprise).</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
