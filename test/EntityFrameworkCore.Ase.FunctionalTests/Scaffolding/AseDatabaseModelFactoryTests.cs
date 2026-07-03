@@ -112,6 +112,31 @@ public class AseDatabaseModelFactoryTests : IDisposable
         Assert.Equal("Id", Assert.Single(foreignKey.PrincipalColumns).Name);
     }
 
+    /// <remarks>
+    ///     Reproduce el caso real encontrado scaffoldeando las bases de ejemplo de Sybase
+    ///     (<c>pubs2</c>/<c>pubs3</c>), que usan tipos definidos por el usuario vía <c>sp_addtype</c>
+    ///     (ej. <c>id</c> como alias de <c>varchar(11)</c>) — antes del fix, el scaffolding no podía
+    ///     mapear esas columnas ("Could not find type mapping ... with data type 'id'"). Ver
+    ///     DECISIONS.md.
+    /// </remarks>
+    [Fact]
+    public void Create_resolves_user_defined_types_to_their_base_type()
+    {
+        using (var connection = new AseConnection(ConnectionString))
+        {
+            connection.Open();
+            Exec(connection, "EXEC sp_addtype UdtId, 'varchar(11)'");
+            Exec(connection, "CREATE TABLE Reviewers (Id UdtId NOT NULL, CONSTRAINT PK_Reviewers PRIMARY KEY (Id))");
+        }
+
+        var factory = new AseDatabaseModelFactory();
+        var model = factory.Create(ConnectionString, new DatabaseModelFactoryOptions());
+
+        var reviewers = Assert.Single(model.Tables, t => t.Name == "Reviewers");
+        var idColumn = Assert.Single(reviewers.Columns, c => c.Name == "Id");
+        Assert.Equal("varchar(11)", idColumn.StoreType);
+    }
+
     [Fact]
     public void Create_respects_the_Tables_filter_and_drops_foreign_keys_to_excluded_tables()
     {

@@ -820,3 +820,97 @@ Verificado con `dotnet pack -c Release`: genera
 - No se agregó ningún ícono de paquete (`PackageIcon`) ni `PackageProjectUrl` explícito (por default
   NuGet.org puede llegar a usar `RepositoryUrl` como referencia, pero no son estrictamente lo mismo) —
   no se pidió y no había un valor claro para ninguno de los dos.
+
+## Post-publicación (0.1.0 → 0.1.1) — hallazgos usando el paquete real desde afuera
+
+Ya publicado el paquete, se validó consumiéndolo desde un proyecto externo (`NugetTest`, fuera de
+este repo) y usando `dotnet ef dbcontext scaffold` contra bases reales (incluida `master` y las bases
+de ejemplo de Sybase `pubs2`/`pubs3`) — apareció una serie de bugs y gaps reales que no se habían
+detectado usando solo bases de prueba armadas a medida.
+
+### Bug real: `GetIndexes` explotaba contra tablas sin columnas indexables
+
+`master` tiene decenas de pseudo-tablas de monitoreo (`monProcess`, `monSysWaits`, etc. — vistas en
+memoria de estadísticas del server, `type = 'U'` en `sysobjects` igual que una tabla real). Contra
+esas tablas, `sp_helpindex` no tira `AseException` (el caso ya cubierto para "tabla sin índices"),
+sino que devuelve un resultset que se ejecuta sin error pero con **cero columnas**
+(`reader.FieldCount == 0`). `AdoNetCore.AseClient.GetOrdinal` tira `ArgumentException` en vez de
+devolver `-1` (el contrato estándar de ADO.NET) para ese caso, y `AseDatabaseModelFactory.GetIndexes`
+no lo contemplaba. Fix: chequear `reader.FieldCount == 0` explícitamente antes de llamar a
+`GetOrdinal`, tratándolo igual que el caso de la excepción. Este bug ya estaba en el `0.1.0`
+publicado — nunca se había probado el scaffold contra una base con este tipo de objetos durante el
+desarrollo original de la feature.
+
+### Bug real preexistente (no de scaffolding): CLR `float` mapeaba al store type equivocado
+
+Al agregar soporte para `real`, se encontró que el mapeo de la Fase 3 para CLR `float`
+(`System.Single`) usaba `FloatTypeMapping.Default`, cuyo `StoreType` es `"float"` — pero confirmado
+contra ASE real, una columna ASE `float` (sin precisión) es de **8 bytes** y el driver la devuelve
+como `System.Double`; `real` es el tipo de **4 bytes** que corresponde a `System.Single`. La Fase 3
+había asumido esto basándose en la tabla de tipos soportados por el driver, sin verificar tamaños
+reales. Con el mapeo viejo, cualquier propiedad `float` generaba una columna `float` (que en ASE es
+doble precisión) declarada como si fuera precisión simple — no rompía en tiempo de ejecución (ASE y
+el driver hacen la conversión numérica sin problema), pero era semánticamente incorrecto, y confundía
+al scaffolding (una columna `float` real se leía de vuelta como `double`, no `float`). Corregido:
+CLR `float` ahora mapea por defecto a `"real"`; el store type string `"float"` ahora resuelve a
+`System.Double` (instancia separada de `"double precision"`, mismo CLR type, para que el scaffolding
+pueda generar el `HasColumnType` correcto según cuál de los dos diga la base real).
+
+### Tipos nuevos agregados: `real`, `smalldatetime`, `money`
+
+Pedido explícito después de ver "Could not find type mapping" al scaffoldear. Verificado contra ASE
+real (`syscolumns`/`systypes`, e insertando/leyendo valores reales) antes de implementar:
+
+| Store type | Tamaño | CLR type devuelto por el driver |
+|---|---|---|
+| `real` | 4 bytes | `System.Single` |
+| `smalldatetime` | 4 bytes | `System.DateTime` |
+| `money` | 8 bytes, precisión/escala fijas 19/4 | `System.Decimal` |
+
+`money` necesitó una variante de `AseDecimalTypeMapping` con `StoreTypePostfix.None` (parámetro nuevo
+agregado a esa clase, default `PrecisionAndScale` para no romper el uso existente de `decimal`) — a
+diferencia de `decimal`/`numeric`, ASE no acepta ni necesita `money(19,4)` entre paréntesis, la
+precisión/escala son fijas e implícitas en el tipo.
+
+### Feature nueva: resolución de tipos definidos por el usuario (UDT / `sp_addtype`) en scaffolding
+
+Las bases de ejemplo clásicas de Sybase (`pubs2`, `pubs3`) usan columnas de tipos como `id`/`tid`,
+creados con `sp_addtype` como alias de un tipo base (ej. `id` es un alias de `varchar(11)` en
+`pubs2`, pero de `char(11)` en `pubs3` — cada base define su propio alias independientemente).
+`systypes.name` para esas columnas devuelve el nombre del alias ("id"), no el del tipo base, y como
+`AseTypeMappingSource` no reconoce "id" como tipo, el scaffolding las salteaba con "Could not find
+type mapping" (esto es lo que disparó el pedido "agregá varchar también": el problema no era que
+faltara "varchar", sino que un alias de usuario nunca llegaba a resolverse a él).
+
+Fix implementado en `AseDatabaseModelFactory`: se agregó `t.type` (código de tipo físico interno de
+ASE, compartido entre un alias UDT y su tipo base) a la consulta de `syscolumns`/`systypes` ya
+existente. Si `systypes.name` no es uno de los nombres que `AseTypeMappingSource` reconoce
+(`KnownAseTypeNames`), se resuelve el nombre base a través de una tabla estática
+(`BaseTypeNamesByTypeCode`) armada consultando `SELECT name, usertype, type FROM systypes WHERE
+usertype < 100` contra ASE real (los tipos "de sistema" — `usertype` 100+ son UDTs). Cuando un mismo
+código de `type` tiene más de un nombre de sistema posible (ej. código 39: lo comparten `varchar`,
+`sysname`, `nvarchar` y `longsysname`), se usó el de `usertype` más bajo como representante — en
+todos los casos observados es el tipo "clásico" más elemental (`varchar` sobre `sysname`, `char`
+sobre `nchar`, `varbinary` sobre `timestamp`).
+
+**Hallazgo aparte, no un bug de este provider**: al validar esto contra `pubs3` completa, la tabla
+`authors` resultó tener **cero primary keys** (`sp_pkeys authors` devuelve vacío — así es el schema
+real de esa base de ejemplo de Sybase), y como otra tabla (`blurbs`) tiene una FK hacia `au_id`, el
+scaffolding genérico de EF Core (no código de este provider) no puede armar el modelo — tira
+`InvalidOperationException: The key {'AuId'} cannot be added to keyless type`. Es una limitación
+conocida del scaffolding de EF Core en general (tabla sin PK pero referenciada por FK), no algo
+arreglable desde `AseDatabaseModelFactory`, que ya reporta la realidad correctamente (no hay PK).
+`pubs2` en cambio scaffoldea limpio de punta a punta, sin ningún warning.
+
+### Tests
+
+- `test/EntityFrameworkCore.Ase.Tests/Storage/AseTypeMappingSourceTests.cs`: casos nuevos para
+  `real`/`smalldatetime`/`money` por nombre de store type, uno específico para confirmar que `money`
+  no lleva sufijo de precisión/escala, y uno para confirmar que `real`/`float` resuelven a CLR types
+  distintos (Single vs Double).
+- `test/EntityFrameworkCore.Ase.FunctionalTests/Scaffolding/AseDatabaseModelFactoryTests.cs`: test
+  nuevo que crea un UDT real vía `sp_addtype` y confirma que `AseDatabaseModelFactory` lo resuelve al
+  tipo base (`varchar(11)`), reproduciendo el caso de `pubs2`/`pubs3`.
+- Verificación manual (no automatizada): `dotnet ef dbcontext scaffold` real contra `pubs2` completa
+  (limpio, sin warnings) y contra `pubs3` (falla en el punto exacto esperado — tabla sin PK
+  referenciada por FK — no por ningún tipo sin mapear).

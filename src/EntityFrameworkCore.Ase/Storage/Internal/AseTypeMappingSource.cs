@@ -11,12 +11,32 @@ namespace EntityFrameworkCore.Ase.Storage.Internal;
 /// </summary>
 public class AseTypeMappingSource : RelationalTypeMappingSource
 {
-    // bool/byte/short/int/long/DateTime/float ya tienen un ".Default" genérico de EF Core cuyo nombre
-    // de store type coincide EXACTAMENTE con el tipo real de ASE (confirmado contra la tabla de tipos
+    // bool/byte/short/int/long/DateTime ya tienen un ".Default" genérico de EF Core cuyo nombre de
+    // store type coincide EXACTAMENTE con el tipo real de ASE (confirmado contra la tabla de tipos
     // soportados de AdoNetCore.AseClient, ver DECISIONS.md) — no hace falta ninguna clase propia para
-    // esos. double/Guid/decimal/string/byte[]/DateTimeOffset sí necesitan mapeos propios.
+    // esos. double/Guid/decimal/string/byte[]/DateTimeOffset/float sí necesitan mapeos propios.
 
     private static readonly DoubleTypeMapping DoublePrecision = new("double precision");
+
+    /// <remarks>
+    ///     <b>Bug real encontrado y corregido</b>: la Fase 3 original asumía que
+    ///     <see cref="FloatTypeMapping" />.Default (StoreType <c>"float"</c>) era el mapeo correcto
+    ///     para CLR <c>float</c> (System.Single), basándose en la tabla de tipos soportados del driver
+    ///     sin verificar tamaños contra ASE real. Confirmado después contra la instancia real: una
+    ///     columna ASE <c>float</c> (sin precisión) es de <b>8 bytes</b> y el driver la devuelve como
+    ///     <c>System.Double</c> — <c>real</c> es el tipo de <b>4 bytes</b> que sí corresponde a
+    ///     <c>System.Single</c>. Con el mapeo viejo, cualquier propiedad <c>float</c> generaba una
+    ///     columna <c>float</c> (doble precisión real) declarada como si fuera de precisión simple —
+    ///     no rompía en tiempo de ejecución (ASE/el driver hacen la conversión numérica sin
+    ///     problema), pero era semánticamente incorrecto y confundía al scaffolding (una columna
+    ///     <c>float</c> real se leía de vuelta como <c>double</c>, no <c>float</c>).
+    /// </remarks>
+    private static readonly FloatTypeMapping RealSinglePrecision = new("real");
+
+    // Distinta instancia de DoublePrecision aunque mismo CLR type (double): así el scaffolding puede
+    // distinguir si la columna real dice "float" o "double precision" y generar el HasColumnType
+    // correcto en cada caso, en vez de mostrar siempre el mismo nombre de tipo.
+    private static readonly DoubleTypeMapping FloatAsDouble = new("float");
 
     // ASE no tiene tipo GUID/UUID nativo. El driver acepta DbType.Guid y convierte a binary por debajo
     // ("technically ASE does not support GUID or UUID types. Our driver supports it, but converts to
@@ -25,6 +45,17 @@ public class AseTypeMappingSource : RelationalTypeMappingSource
     private static readonly GuidTypeMapping GuidAsBinary = new("binary(16)", DbType.Guid);
 
     private static readonly AseDecimalTypeMapping DecimalDefault = new("decimal", precision: 18, scale: 2);
+
+    // "smalldatetime" (4 bytes, precisión de minuto) es un tipo real de ASE distinto de "datetime" (8
+    // bytes) — el driver lo devuelve igual como System.DateTime, pero necesita su propia instancia
+    // con StoreType "smalldatetime" por el mismo motivo que "real" de arriba.
+    private static readonly DateTimeTypeMapping SmallDateTime = new("smalldatetime");
+
+    // "money" (8 bytes, precisión/escala fijas 19/4) — confirmado contra ASE real que el driver lo
+    // devuelve como System.Decimal. A diferencia de decimal/numeric, ASE no acepta precisión/escala
+    // entre paréntesis para money (es un tipo fijo), por eso StoreTypePostfix.None.
+    private static readonly AseDecimalTypeMapping Money =
+        new("money", precision: 19, scale: 4, storeTypePostfix: StoreTypePostfix.None);
 
     private static readonly AseDateTimeOffsetTypeMapping DateTimeOffsetAsDateTime = new();
 
@@ -55,7 +86,7 @@ public class AseTypeMappingSource : RelationalTypeMappingSource
         { typeof(short), ShortTypeMapping.Default },
         { typeof(int), IntTypeMapping.Default },
         { typeof(long), LongTypeMapping.Default },
-        { typeof(float), FloatTypeMapping.Default },
+        { typeof(float), RealSinglePrecision },
         { typeof(double), DoublePrecision },
         { typeof(decimal), DecimalDefault },
         { typeof(DateTime), DateTimeTypeMapping.Default },
@@ -71,11 +102,14 @@ public class AseTypeMappingSource : RelationalTypeMappingSource
             { "smallint", ShortTypeMapping.Default },
             { "int", IntTypeMapping.Default },
             { "bigint", LongTypeMapping.Default },
-            { "float", FloatTypeMapping.Default },
+            { "real", RealSinglePrecision },
+            { "float", FloatAsDouble },
             { "double precision", DoublePrecision },
             { "decimal", DecimalDefault },
             { "numeric", DecimalDefault },
+            { "money", Money },
             { "datetime", DateTimeTypeMapping.Default },
+            { "smalldatetime", SmallDateTime },
             { "binary", FixedLengthBinary },
             { "varbinary", VariableLengthBinary },
             { "image", UnboundedBinary },

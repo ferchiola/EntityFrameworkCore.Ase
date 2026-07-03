@@ -35,6 +35,49 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 
+    // Nombres de tipo que AseTypeMappingSource reconoce directamente — si systypes.name ya es uno de
+    // estos, se usa tal cual, sin pasar por la resolución de UDT de abajo.
+    private static readonly HashSet<string> KnownAseTypeNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bit", "tinyint", "smallint", "int", "bigint", "real", "float", "numeric", "decimal", "money",
+        "datetime", "smalldatetime", "binary", "varbinary", "image", "char", "varchar", "text",
+        "unichar", "univarchar", "unitext"
+    };
+
+    /// <remarks>
+    ///     Armada consultando <c>SELECT name, usertype, type FROM systypes WHERE usertype &lt; 100</c>
+    ///     contra ASE real (los tipos "de sistema" — <c>usertype</c> 100+ son tipos definidos por el
+    ///     usuario vía <c>sp_addtype</c>, como <c>id</c>/<c>tid</c> de <c>pubs2</c>/<c>pubs3</c>). Cuando
+    ///     un mismo código de <c>type</c> tiene más de un nombre de sistema posible, se eligió el de
+    ///     menor <c>usertype</c> (ej. código 39: <c>varchar</c>(usertype 2) en vez de
+    ///     <c>sysname</c>(18)/<c>nvarchar</c>(25)/<c>longsysname</c>(42); código 47: <c>char</c>(1) en
+    ///     vez de <c>nchar</c>(24); código 37: <c>varbinary</c>(4) en vez de <c>timestamp</c>(80)).
+    /// </remarks>
+    private static readonly Dictionary<int, string> BaseTypeNamesByTypeCode = new()
+    {
+        { 47, "char" },
+        { 39, "varchar" },
+        { 45, "binary" },
+        { 37, "varbinary" },
+        { 48, "tinyint" },
+        { 52, "smallint" },
+        { 56, "int" },
+        { 191, "bigint" },
+        { 62, "float" },
+        { 59, "real" },
+        { 55, "decimal" },
+        { 63, "numeric" },
+        { 60, "money" },
+        { 61, "datetime" },
+        { 58, "smalldatetime" },
+        { 50, "bit" },
+        { 35, "text" },
+        { 34, "image" },
+        { 135, "unichar" },
+        { 155, "univarchar" },
+        { 174, "unitext" }
+    };
+
     public override DatabaseModel Create(string connectionString, DatabaseModelFactoryOptions options)
     {
         using var connection = new AseConnection(connectionString);
@@ -119,12 +162,30 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
     }
 
     /// <remarks>
+    ///     <para>
     ///     Se combinan dos fuentes porque ninguna alcanza sola (confirmado contra ASE real):
     ///     <c>sp_columns</c> da longitud/precisión/escala/nullable de forma confiable, pero el nombre
     ///     de tipo que devuelve para una columna <c>IDENTITY</c> es el genérico "numeric identity" en
     ///     vez del tipo realmente declarado (<c>int</c>, <c>smallint</c>, etc.); <c>syscolumns</c>
     ///     joineada con <c>systypes</c> da el nombre de tipo real y el bit de <c>IDENTITY</c>
     ///     (<c>status &amp; 128</c>), pero no resuelve length/precision/scale de forma tan directa.
+    ///     </para>
+    ///     <para>
+    ///     <b>Tipos definidos por el usuario (UDT, <c>sp_addtype</c>)</b>: bases de ejemplo clásicas de
+    ///     Sybase como <c>pubs2</c>/<c>pubs3</c> usan columnas de tipos como <c>id</c>/<c>tid</c>, que
+    ///     son alias creados con <c>sp_addtype</c> sobre un tipo base (ej. <c>id</c> es en el fondo un
+    ///     <c>varchar(11)</c>). <c>systypes.name</c> para esas columnas devuelve el nombre del alias
+    ///     ("id"), no el del tipo base, y como el mapping source no reconoce "id", el scaffolding lo
+    ///     salteaba con "Could not find type mapping". Se resuelve comparando
+    ///     <c>systypes.type</c> (el código de tipo físico interno, compartido entre el alias y su tipo
+    ///     base) contra <see cref="BaseTypeNamesByTypeCode" /> — una tabla armada consultando
+    ///     <c>systypes</c> real (<c>SELECT name, usertype, type FROM systypes WHERE usertype &lt;
+    ///     100</c>, los tipos "de sistema") y, para cada código de tipo con más de un nombre posible
+    ///     (ej. el código 39 lo comparten <c>varchar</c>, <c>sysname</c>, <c>nvarchar</c> y
+    ///     <c>longsysname</c>), eligiendo el de <c>usertype</c> más bajo — que en todos los casos
+    ///     observados es el tipo "clásico" más elemental (<c>varchar</c> por sobre <c>sysname</c>,
+    ///     <c>char</c> por sobre <c>nchar</c>, etc.).
+    ///     </para>
     /// </remarks>
     private static void GetColumns(DbConnection connection, DatabaseTable table)
     {
@@ -133,7 +194,7 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
         using (var command = connection.CreateCommand())
         {
             command.CommandText =
-                "SELECT c.colid, t.name, c.status FROM syscolumns c "
+                "SELECT c.colid, t.name, t.type, c.status FROM syscolumns c "
                 + "JOIN systypes t ON c.usertype = t.usertype "
                 + "WHERE c.id = OBJECT_ID(@table_name) ORDER BY c.colid";
             AddParameter(command, "@table_name", table.Name);
@@ -142,8 +203,14 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
             while (reader.Read())
             {
                 var colid = Convert.ToInt32(reader.GetValue(0));
-                var typeName = reader.GetString(1).Trim();
-                var status = Convert.ToInt32(reader.GetValue(2));
+                var rawTypeName = reader.GetString(1).Trim();
+                var typeCode = Convert.ToInt32(reader.GetValue(2));
+                var status = Convert.ToInt32(reader.GetValue(3));
+
+                var typeName = KnownAseTypeNames.Contains(rawTypeName) || !BaseTypeNamesByTypeCode.TryGetValue(typeCode, out var baseTypeName)
+                    ? rawTypeName
+                    : baseTypeName;
+
                 typesByOrdinal[colid] = (typeName, (status & 0x80) == 0x80);
             }
         }

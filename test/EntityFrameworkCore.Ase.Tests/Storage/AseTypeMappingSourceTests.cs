@@ -25,7 +25,7 @@ public class AseTypeMappingSourceTests
     [InlineData(typeof(short), "smallint")]
     [InlineData(typeof(int), "int")]
     [InlineData(typeof(long), "bigint")]
-    [InlineData(typeof(float), "float")]
+    [InlineData(typeof(float), "real")]
     [InlineData(typeof(double), "double precision")]
     [InlineData(typeof(decimal), "decimal(18,2)")]
     [InlineData(typeof(DateTime), "datetime")]
@@ -95,11 +95,35 @@ public class AseTypeMappingSourceTests
     [InlineData("varchar", typeof(string))]
     [InlineData("univarchar", typeof(string))]
     [InlineData("varbinary", typeof(byte[]))]
+    [InlineData("real", typeof(float))]
+    [InlineData("smalldatetime", typeof(DateTime))]
+    [InlineData("money", typeof(decimal))]
     public void FindMapping_by_explicit_store_type_name_resolves_the_right_CLR_type(string storeTypeName, Type expectedClrType)
     {
         var mapping = CreateTypeMappingSource().FindMapping(storeTypeName);
 
         Assert.NotNull(mapping);
         Assert.Equal(expectedClrType, mapping.ClrType);
+    }
+
+    [Fact]
+    public void Money_mapping_has_no_precision_scale_suffix_in_the_store_type()
+    {
+        // A diferencia de decimal/numeric, ASE no acepta "money(19,4)" — la precisión/escala de
+        // money es fija e implícita (ver DECISIONS.md).
+        var mapping = CreateTypeMappingSource().FindMapping("money");
+
+        Assert.Equal("money", mapping!.StoreType);
+    }
+
+    [Fact]
+    public void Real_and_float_store_types_resolve_to_different_CLR_precision()
+    {
+        // "real" (4 bytes) -> System.Single, "float" (8 bytes) -> System.Double — confirmado contra
+        // ASE real que son tipos distintos, no sinónimos (ver DECISIONS.md).
+        var typeMappingSource = CreateTypeMappingSource();
+
+        Assert.Equal(typeof(float), typeMappingSource.FindMapping("real")!.ClrType);
+        Assert.Equal(typeof(double), typeMappingSource.FindMapping("float")!.ClrType);
     }
 }
