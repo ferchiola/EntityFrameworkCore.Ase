@@ -4,11 +4,6 @@ Proveedor de Entity Framework Core para SAP ASE (Adaptive Server
 Enterprise, ex-Sybase), escrito desde cero siguiendo la arquitectura
 relacional actual de EF Core (9.x).
 
-> Nombre provisorio. `EntityFrameworkCore.Ase` ya existe como paquete en
-> NuGet.org (de `spasarto`, sin actividad desde 2022, sin licencia
-> declarada) — antes de publicar este paquete hay que definir un nombre
-> propio (ver `DECISIONS.md`).
-
 ## Alcance
 
 - Motor objetivo: **SAP ASE 16.x**.
@@ -30,5 +25,9 @@ EntityFrameworkCore.Ase/
 
 ## Estado
 
-En Fase 0 (investigación + setup). Ver `DECISIONS.md` para el detalle de
-cada fase y `CLAUDE.md` para el plan completo.
+Fases 0 a 8 completas (investigación/setup, DI, conexión, type mapping,
+queries, migraciones, metadata/annotations, scaffolding, naming del
+paquete NuGet — publicado como `Chiola.EntityFrameworkCore.Ase`). En
+Fase 9 (Specification Test Suite de EF Core), la fase final. Ver
+`DECISIONS.md` para el detalle de cada fase y `CLAUDE.md` para el plan
+completo.
