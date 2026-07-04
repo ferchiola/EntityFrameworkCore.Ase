@@ -893,14 +893,32 @@ código de `type` tiene más de un nombre de sistema posible (ej. código 39: lo
 todos los casos observados es el tipo "clásico" más elemental (`varchar` sobre `sysname`, `char`
 sobre `nchar`, `varbinary` sobre `timestamp`).
 
-**Hallazgo aparte, no un bug de este provider**: al validar esto contra `pubs3` completa, la tabla
+**Hallazgo relacionado, corregido después**: al validar esto contra `pubs3` completa, la tabla
 `authors` resultó tener **cero primary keys** (`sp_pkeys authors` devuelve vacío — así es el schema
 real de esa base de ejemplo de Sybase), y como otra tabla (`blurbs`) tiene una FK hacia `au_id`, el
-scaffolding genérico de EF Core (no código de este provider) no puede armar el modelo — tira
-`InvalidOperationException: The key {'AuId'} cannot be added to keyless type`. Es una limitación
-conocida del scaffolding de EF Core en general (tabla sin PK pero referenciada por FK), no algo
-arreglable desde `AseDatabaseModelFactory`, que ya reporta la realidad correctamente (no hay PK).
-`pubs2` en cambio scaffoldea limpio de punta a punta, sin ningún warning.
+scaffolding genérico de EF Core (no código de este provider) no podía armar el modelo — tiraba
+`InvalidOperationException: The key {'AuId'} cannot be added to keyless type`, **abortando el
+scaffold completo**, incluidas todas las demás tablas de la base que no tenían ningún problema. Ver
+el fix en la sección siguiente. `pubs2` (que no tiene ninguna tabla sin PK) scaffoldeaba limpio de
+punta a punta ya antes de ese fix, sin ningún warning.
+
+### Fix: no abortar el scaffold completo por una FK hacia una tabla sin primary key
+
+Pedido explícito después de encontrar el caso de `pubs3` de arriba: en vez de dejar que el
+scaffolding genérico de EF Core explote (y tire abajo *todas* las tablas, no solo la problemática),
+`AseDatabaseModelFactory.GetForeignKeys` ahora descarta la FK (no la tabla) cuando la tabla principal
+no tiene `PrimaryKey` — funciona porque `GetForeignKeys` corre en una segunda pasada, después de que
+todas las tablas ya tienen su `PrimaryKey` resuelto (ver el orden en `Create`). La tabla en sí se
+sigue scaffoldeando normalmente (columnas, PK propia si tiene, índices) — solo pierde esa relación y
+la navegación que hubiera generado.
+
+Se confirmó contra ASE real que ni siquiera es *posible* crear una FK así con DDL estándar en esta
+versión ("There is no unique constraint on the referenced columns in the referenced table") — el
+escenario solo aparece en esquemas legacy como `pubs3` (creados antes de que ASE empezara a exigir
+esto, o por algún otro medio no identificado). Por eso no hay un test automatizado que lo reproduzca
+desde cero armando el esquema; se verificó manualmente scaffoldeando `pubs3` completa antes y después
+del fix (antes: excepción, aborta todo; después: las 11 tablas se generan bien, `Blurb.AuId` queda
+como columna plana sin navegación hacia `Author`).
 
 ### Tests
 
@@ -911,6 +929,6 @@ arreglable desde `AseDatabaseModelFactory`, que ya reporta la realidad correctam
 - `test/EntityFrameworkCore.Ase.FunctionalTests/Scaffolding/AseDatabaseModelFactoryTests.cs`: test
   nuevo que crea un UDT real vía `sp_addtype` y confirma que `AseDatabaseModelFactory` lo resuelve al
   tipo base (`varchar(11)`), reproduciendo el caso de `pubs2`/`pubs3`.
-- Verificación manual (no automatizada): `dotnet ef dbcontext scaffold` real contra `pubs2` completa
-  (limpio, sin warnings) y contra `pubs3` (falla en el punto exacto esperado — tabla sin PK
-  referenciada por FK — no por ningún tipo sin mapear).
+- Verificación manual (no automatizada): `dotnet ef dbcontext scaffold` real contra `pubs2` y
+  `pubs3` completas, ambas limpias y sin errores (después del fix de FK-hacia-tabla-sin-PK de
+  arriba).

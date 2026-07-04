@@ -388,6 +388,19 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
     ///     cualquier FK real en una base ASE es, en la práctica, siempre
     ///     <see cref="ReferentialAction.NoAction" /> — no hay ambigüedad que resolver.
     ///     </para>
+    ///     <para>
+    ///     <b>Tablas principales sin primary key</b>: confirmado contra <c>pubs3</c> (base de ejemplo
+    ///     de Sybase) que esto pasa en la práctica — <c>authors</c> no tiene PK
+    ///     (<c>sp_pkeys authors</c> devuelve vacío) pero <c>blurbs</c> tiene una FK hacia
+    ///     <c>authors.au_id</c>. Si se arma esa <see cref="DatabaseForeignKey" /> igual, el
+    ///     scaffolding genérico de EF Core (<c>RelationalScaffoldingModelFactory</c>, no código de
+    ///     este provider) explota con <c>InvalidOperationException: The key {...} cannot be added to
+    ///     keyless type</c> al intentar agregarle una key a una tabla que ya quedó marcada "keyless" —
+    ///     y aborta el scaffold completo, incluidas todas las demás tablas que sí estaban bien. Para
+    ///     que una tabla problemática no tire abajo todo el resto, se descarta la FK (no la tabla) si
+    ///     la tabla principal no tiene primary key — la tabla en sí se sigue scaffoldeando normalmente,
+    ///     solo queda sin esa relación/navegación.
+    ///     </para>
     /// </remarks>
     private static void GetForeignKeys(DbConnection connection, DatabaseTable table, DatabaseModel databaseModel)
     {
@@ -420,6 +433,13 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
                     // La tabla principal quedó afuera del scaffold (filtrada por options.Tables) — no
                     // se puede armar la FK sin ella, se descarta esta relación (y sus filas siguientes,
                     // hasta el próximo reinicio de key_seq).
+                    continue;
+                }
+
+                if (principalTable.PrimaryKey == null)
+                {
+                    // Ver el remarks de este método: una tabla principal sin PK haría explotar todo el
+                    // scaffold más adelante — se descarta la FK, no la tabla.
                     continue;
                 }
 

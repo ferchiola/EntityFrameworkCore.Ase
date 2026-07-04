@@ -137,6 +137,15 @@ public class AseDatabaseModelFactoryTests : IDisposable
         Assert.Equal("varchar(11)", idColumn.StoreType);
     }
 
+    // No hay un test automatizado para "FK hacia tabla sin PK" (el escenario real que aparece en
+    // pubs3, ver DECISIONS.md): se confirmó directamente contra ASE real que ni siquiera se puede
+    // *crear* esa FK con DDL estándar en esta versión — "There is no unique constraint on the
+    // referenced columns in the referenced table". Solo aparece en esquemas legacy como pubs3
+    // (creados antes de que ASE empezara a exigir esto, o por otro medio no identificado), así que no
+    // se puede reproducir de forma limpia armando el esquema desde cero. El fix en GetForeignKeys
+    // (descartar la FK si la tabla principal no tiene PrimaryKey) se verificó manualmente scaffoldeando
+    // pubs3 completa antes y después del cambio.
+
     [Fact]
     public void Create_respects_the_Tables_filter_and_drops_foreign_keys_to_excluded_tables()
     {
