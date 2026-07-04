@@ -973,3 +973,70 @@ alguno de estos tres.
 - Verificación manual (no automatizada): `dotnet ef dbcontext scaffold` real contra una tabla armada
   con el mismo esquema reportado (`int IDENTITY` PK + `date`/`time`/`smallmoney` nullable) — limpio,
   sin ningún warning.
+
+## Publicación automática a nuget.org (`.github/workflows/publish.yml`)
+
+Ya está andando de punta a punta: **push de un tag `vX.Y.Z` → build → tests unitarios → pack →
+login OIDC contra nuget.org (Trusted Publishing) → push**, sin ningún secreto guardado en GitHub ni
+intervención manual. Confirmado end-to-end publicando `0.1.5` real.
+
+### Cómo publicar una versión nueva (para la próxima)
+
+1. Bump de `<Version>` en `src/EntityFrameworkCore.Ase/EntityFrameworkCore.Ase.csproj`.
+2. `dotnet test` (los 53 tests, unitarios + funcionales contra `SERVER_ASE` real) en verde.
+3. Commit del bump (y de cualquier otro cambio pendiente).
+4. `git tag vX.Y.Z`
+5. `git push origin main vX.Y.Z` — esto solo dispara el workflow, que se encarga de todo el resto.
+6. Nada de API keys ni de `dotnet nuget push` manual — si el workflow falla, ver la sección de
+   troubleshooting de abajo antes de recurrir a publicar a mano.
+
+### Configuración de Trusted Publishing en nuget.org
+
+Policy activa, con estos valores exactos (los únicos que importan, coinciden con lo que declara
+`publish.yml`):
+
+- **Owner de la policy**: `chiola` (cuenta de nuget.org, dueña del paquete).
+- **Repository Owner**: `ferchiola` (usuario de GitHub — **no** `chiola`, son cosas distintas y es
+  el error más común al configurar esto).
+- **Repository**: `EntityFrameworkCore.Ase`.
+- **Workflow File**: `publish.yml` (nombre de archivo solo, sin la ruta `.github/workflows/`).
+- **Environment**: vacío (el workflow no usa `environment:` en el job).
+
+El workflow necesita `permissions: id-token: write` a nivel del job (ya está), el step
+`NuGet/login@v1` con `user: chiola`, y usar el `NUGET_API_KEY` que ese step genera (válido 1 hora)
+en el `dotnet nuget push` siguiente — no un key propio guardado en ningún lado.
+
+### Troubleshooting: si un run por tag falla con "No matching trust policy"
+
+Esto pasó varias veces seguidas (versiones 0.1.2 a 0.1.4) con el mensaje exacto:
+
+> Token exchange failed (HTTP 401) ... No matching trust policy owned by user 'chiola' was found.
+
+A pesar de que la policy en nuget.org tenía **todos** los campos correctos (verificado
+explícitamente, incluidos los IDs numéricos permanentes de GitHub ya resueltos — o sea que la policy
+ya había validado ownership contra ese repo antes). Lo que destrabó esto:
+
+1. Se agregó `workflow_dispatch: {}` como trigger adicional en `publish.yml`, para poder correr el
+   job manualmente desde la pestaña Actions sin necesitar un tag nuevo.
+2. Un run disparado así (manual, sobre la rama `main`) **sí autenticó bien** contra nuget.org — el
+   login generó el `NUGET_API_KEY` correctamente y el push llegó a ejecutarse (falló después con 409
+   porque esa versión ya existía, pero el 409 en sí es la prueba de que la autenticación funcionó).
+3. Con esa señal, se probó de nuevo con un tag real (`v0.1.5`) — y esta vez **sí funcionó**.
+
+No quedó 100% claro cuál fue la causa exacta (¿el ref de tag vs. de rama al validar el token OIDC?
+¿la policy necesitando algún tiempo extra para terminar de "asentarse" después de haber sido
+revisada/editada, como menciona la documentación oficial de Trusted Publishing sobre el período de
+activación?) — pero la secuencia de arriba (probar con `workflow_dispatch` primero para separar
+"problema de autenticación" de "problema de tag") es la forma más rápida de diagnosticar si esto
+vuelve a pasar. El trigger `workflow_dispatch` se dejó permanentemente en el workflow por si hace
+falta repetir este diagnóstico.
+
+`--skip-duplicate` se agregó al `dotnet nuget push` del workflow para que un re-run (manual o
+reintentado) no falle con 409 si la versión ya se había publicado en un intento anterior.
+
+### Nota operativa (no del proyecto, del entorno local)
+
+Cada `git push`/`git tag push` en esta máquina puede quedar esperando una ventana de
+`git-credential-manager` titulada "Select an account" que no es visible por comandos — solo aparece
+como ventana de Windows. Si un push parece colgado, chequear procesos con
+`Get-Process | Where-Object MainWindowTitle` antes de asumir que falló.
