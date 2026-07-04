@@ -932,3 +932,44 @@ como columna plana sin navegación hacia `Author`).
 - Verificación manual (no automatizada): `dotnet ef dbcontext scaffold` real contra `pubs2` y
   `pubs3` completas, ambas limpias y sin errores (después del fix de FK-hacia-tabla-sin-PK de
   arriba).
+
+## Tipos nuevos agregados usando una base de producción real: `smallmoney`, `date`, `time`
+
+Reportado por el usuario scaffoldeando una base de producción real (no una de prueba armada a
+medida) con `Chiola.EntityFrameworkCore.Ase` 0.1.2 — decenas de "Could not find type mapping" para
+estos tres tipos, y varias tablas enteras perdidas por tener alguno de ellos en la primary key
+("Could not scaffold the primary key ... Unable to generate entity type"). Verificado contra ASE real
+(`sp_columns` e insertando/leyendo valores) antes de implementar:
+
+| Store type | Tamaño | CLR type devuelto por el driver |
+|---|---|---|
+| `smallmoney` | 4 bytes, precisión/escala fijas 10/4 | `System.Decimal` |
+| `date` | 4 bytes | `System.DateTime` (con la hora en cero) |
+| `time` | 4 bytes | `System.DateTime` (con una fecha sintética fija `1900-01-01` y la hora real) |
+
+`smallmoney` reutiliza el mismo patrón que `money` (Fase post-0.1.1): `AseDecimalTypeMapping` con
+`StoreTypePostfix.None`, ya que tampoco acepta precisión/escala entre paréntesis.
+
+**Limitación conocida y documentada, no resuelta**: `date`/`time` se mapean a CLR `System.DateTime`
+en vez de `System.DateOnly`/`System.TimeOnly` (disponibles desde .NET 6 y soportados por EF Core
+desde la versión 8). Se decidió así porque `AdoNetCore.AseClient` no los soporta nativamente — el
+driver siempre devuelve `System.DateTime` para ambos tipos, así que usar `DateOnly`/`TimeOnly`
+requeriría un `ValueConverter` propio no verificado, en vez de simplemente aceptar lo que el driver ya
+entrega. Para `time` en particular, el `DateTime` resultante siempre trae una fecha sintética fija
+(`1900-01-01`) sin ningún significado — quien use este mapeo tiene que ignorar la parte de fecha del
+valor. Se documenta como deuda técnica para revisar más adelante (agregar `DateOnly`/`TimeOnly` con
+`ValueConverter` sería una mejora, no un fix urgente).
+
+También se agregaron `"smallmoney"`/`"date"`/`"time"` a `KnownAseTypeNames` y sus códigos de tipo
+(`122`/`49`/`51` respectivamente) a `BaseTypeNamesByTypeCode` en `AseDatabaseModelFactory`, para que
+la resolución de UDT (ver sección anterior) también los reconozca si algún día aparece un alias sobre
+alguno de estos tres.
+
+### Tests
+
+- `test/EntityFrameworkCore.Ase.Tests/Storage/AseTypeMappingSourceTests.cs`: casos nuevos para
+  `smallmoney`/`date`/`time` por nombre de store type, y el test de "sin sufijo de precisión/escala"
+  ahora cubre `money` y `smallmoney` juntos.
+- Verificación manual (no automatizada): `dotnet ef dbcontext scaffold` real contra una tabla armada
+  con el mismo esquema reportado (`int IDENTITY` PK + `date`/`time`/`smallmoney` nullable) — limpio,
+  sin ningún warning.

@@ -98,6 +98,9 @@ public class AseTypeMappingSourceTests
     [InlineData("real", typeof(float))]
     [InlineData("smalldatetime", typeof(DateTime))]
     [InlineData("money", typeof(decimal))]
+    [InlineData("smallmoney", typeof(decimal))]
+    [InlineData("date", typeof(DateTime))]
+    [InlineData("time", typeof(DateTime))]
     public void FindMapping_by_explicit_store_type_name_resolves_the_right_CLR_type(string storeTypeName, Type expectedClrType)
     {
         var mapping = CreateTypeMappingSource().FindMapping(storeTypeName);
@@ -106,14 +109,16 @@ public class AseTypeMappingSourceTests
         Assert.Equal(expectedClrType, mapping.ClrType);
     }
 
-    [Fact]
-    public void Money_mapping_has_no_precision_scale_suffix_in_the_store_type()
+    [Theory]
+    [InlineData("money")]
+    [InlineData("smallmoney")]
+    public void Money_mappings_have_no_precision_scale_suffix_in_the_store_type(string storeTypeName)
     {
-        // A diferencia de decimal/numeric, ASE no acepta "money(19,4)" — la precisión/escala de
-        // money es fija e implícita (ver DECISIONS.md).
-        var mapping = CreateTypeMappingSource().FindMapping("money");
+        // A diferencia de decimal/numeric, ASE no acepta "money(19,4)"/"smallmoney(10,4)" — la
+        // precisión/escala de money/smallmoney es fija e implícita (ver DECISIONS.md).
+        var mapping = CreateTypeMappingSource().FindMapping(storeTypeName);
 
-        Assert.Equal("money", mapping!.StoreType);
+        Assert.Equal(storeTypeName, mapping!.StoreType);
     }
 
     [Fact]

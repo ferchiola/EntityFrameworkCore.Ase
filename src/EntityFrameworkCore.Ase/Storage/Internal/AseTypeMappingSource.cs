@@ -57,6 +57,19 @@ public class AseTypeMappingSource : RelationalTypeMappingSource
     private static readonly AseDecimalTypeMapping Money =
         new("money", precision: 19, scale: 4, storeTypePostfix: StoreTypePostfix.None);
 
+    // "smallmoney" (4 bytes, precisión/escala fijas 10/4) — mismo criterio que "money" de arriba,
+    // confirmado contra ASE real (sp_columns: precision=10, scale=4).
+    private static readonly AseDecimalTypeMapping SmallMoney =
+        new("smallmoney", precision: 10, scale: 4, storeTypePostfix: StoreTypePostfix.None);
+
+    // "date"/"time" son tipos ANSI reales de ASE 15.7+, distintos de "datetime". Confirmado contra ASE
+    // real que el driver devuelve ambos como System.DateTime — "date" con la hora en cero, "time" con
+    // una fecha sintética fija (1900-01-01) y la hora real. No se mapean a DateOnly/TimeOnly (el driver
+    // no los soporta nativamente); se documenta la limitación en vez de agregar un ValueConverter
+    // custom no verificado.
+    private static readonly DateTimeTypeMapping AseDate = new("date");
+    private static readonly DateTimeTypeMapping AseTime = new("time");
+
     private static readonly AseDateTimeOffsetTypeMapping DateTimeOffsetAsDateTime = new();
 
     // ASE distingue tipos "ANSI" (varchar/char/text, charset del server) de tipos Unicode
@@ -108,8 +121,11 @@ public class AseTypeMappingSource : RelationalTypeMappingSource
             { "decimal", DecimalDefault },
             { "numeric", DecimalDefault },
             { "money", Money },
+            { "smallmoney", SmallMoney },
             { "datetime", DateTimeTypeMapping.Default },
             { "smalldatetime", SmallDateTime },
+            { "date", AseDate },
+            { "time", AseTime },
             { "binary", FixedLengthBinary },
             { "varbinary", VariableLengthBinary },
             { "image", UnboundedBinary },

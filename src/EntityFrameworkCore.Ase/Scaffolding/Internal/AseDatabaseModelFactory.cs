@@ -40,8 +40,8 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
     private static readonly HashSet<string> KnownAseTypeNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "bit", "tinyint", "smallint", "int", "bigint", "real", "float", "numeric", "decimal", "money",
-        "datetime", "smalldatetime", "binary", "varbinary", "image", "char", "varchar", "text",
-        "unichar", "univarchar", "unitext"
+        "smallmoney", "datetime", "smalldatetime", "date", "time", "binary", "varbinary", "image",
+        "char", "varchar", "text", "unichar", "univarchar", "unitext"
     };
 
     /// <remarks>
@@ -68,8 +68,11 @@ public class AseDatabaseModelFactory : DatabaseModelFactory
         { 55, "decimal" },
         { 63, "numeric" },
         { 60, "money" },
+        { 122, "smallmoney" },
         { 61, "datetime" },
         { 58, "smalldatetime" },
+        { 49, "date" },
+        { 51, "time" },
         { 50, "bit" },
         { 35, "text" },
         { 34, "image" },
