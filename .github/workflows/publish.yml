@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch: {} # Permite disparar el workflow a mano para probar/depurar sin crear un tag.
 
 jobs:
   build-and-publish:
